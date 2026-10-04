@@ -86,9 +86,12 @@ import com.shockwave.pdfium.util.SizeF;
 
 import java.io.File;
 import java.io.InputStream;
+import java.text.Bidi;
+import java.text.BreakIterator;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * It supports animations, zoom, cache, and swipe.
@@ -112,14 +115,11 @@ public class PDFView extends RelativeLayout {
 
     private static final String TAG = PDFView.class.getSimpleName();
     private static final int INVALID_CHAR_INDEX = -1;
-    private static final float MAX_FALLBACK_CHAR_DISTANCE_SQ = 400f;
     private static final float MAX_FALLBACK_DEVICE_DISTANCE_SQ = 900f;
-    private static final float SELECTION_HANDLE_RADIUS = 40f;
-    private static final float SELECTION_HANDLE_TOUCH_RADIUS = 64f;
     private static final int SELECTION_POPUP_MARGIN_DP = 8;
     private static final int SELECTION_POPUP_HORIZONTAL_PADDING_DP = 16;
-    private static final int SELECTION_POPUP_VERTICAL_PADDING_DP = 10;
-    private static final int SELECTION_POPUP_CORNER_RADIUS_DP = 12;
+    private static final int SELECTION_POPUP_MIN_HEIGHT_DP = 48;
+    private static final int SELECTION_POPUP_CORNER_RADIUS_DP = 28;
     private static final int SELECTION_POPUP_ELEVATION_DP = 6;
     private static final float SELECTION_POPUP_TEXT_SIZE_SP = 14f;
 
@@ -218,7 +218,8 @@ public class PDFView extends RelativeLayout {
 
      private Paint textSelectionPaint;
 
-     private Paint selectionHandlePaint;
+    private TextSelectionHandle selectionStartHandle;
+    private TextSelectionHandle selectionEndHandle;
 
      /**
       * Paint object for drawing debug stuff
@@ -242,8 +243,11 @@ public class PDFView extends RelativeLayout {
      private int selectionPage = -1;
      private int selectionStart = INVALID_CHAR_INDEX;
      private int selectionEnd = INVALID_CHAR_INDEX;
-     private RectF selectionStartHandleBounds = null;
-     private RectF selectionEndHandleBounds = null;
+    private int selectionAnchorStart = INVALID_CHAR_INDEX;
+    private int selectionAnchorEnd = INVALID_CHAR_INDEX;
+    private BreakIterator selectionWordIterator;
+    private Bidi selectionTextDirection;
+    private String selectionPageText = "";
      private String selectedText = "";
      private PopupWindow selectionActionPopup;
      private boolean allowSelectionActionPopupAutoShow = false;
@@ -382,9 +386,8 @@ public class PDFView extends RelativeLayout {
          textSelectionPaint = new Paint();
          textSelectionPaint.setStyle(Style.FILL);
          textSelectionPaint.setColor(selectionHighlightColor);
-         selectionHandlePaint = new Paint();
-         selectionHandlePaint.setStyle(Style.FILL);
-         selectionHandlePaint.setColor(selectionHandleColor);
+        selectionStartHandle = new TextSelectionHandle(context, true, selectionHandleColor);
+        selectionEndHandle = new TextSelectionHandle(context, false, selectionHandleColor);
          debugPaint = new Paint();
          debugPaint.setStyle(Style.STROKE);
 
@@ -1028,49 +1031,26 @@ public class PDFView extends RelativeLayout {
          return avgHeight * 0.3f;
      }
 
-      private void drawSelectionHandles(Canvas canvas) {
-          selectionStartHandleBounds = null;
-          selectionEndHandleBounds = null;
-          SelectionSetup setup = validateAndSetupSelection();
-          if (setup == null) {
-              return;
-          }
+    private void drawSelectionHandles(Canvas canvas) {
+        selectionStartHandle.hide();
+        selectionEndHandle.hide();
+        SelectionSetup setup = validateAndSetupSelection();
+        if (setup == null) return;
+        drawSelectionHandle(canvas, setup, selectionStart, selectionStartHandle);
+        drawSelectionHandle(canvas, setup, selectionEnd, selectionEndHandle);
+    }
 
-          int start = Math.min(selectionStart, selectionEnd);
-         int end = Math.max(selectionStart, selectionEnd);
-
-          // Get start and end character boxes
-          RectF startBox = pdfFile.getCharBox(setup.page, start);
-          RectF endBox = pdfFile.getCharBox(setup.page, end);
-
-          if (startBox != null) {
-              RectF mappedStart = pdfFile.mapRectToDevice(setup.page, setup.pageX, setup.pageY, (int) setup.pageSize.getWidth(), (int) setup.pageSize.getHeight(), startBox);
-             if (mappedStart != null) {
-                 mappedStart.sort();
-                 float handleX = mappedStart.left;
-                 float handleY = mappedStart.centerY();
-                 float touchHandleX = handleX + currentXOffset;
-                 float touchHandleY = handleY + currentYOffset;
-                 selectionStartHandleBounds = new RectF(touchHandleX - SELECTION_HANDLE_TOUCH_RADIUS, touchHandleY - SELECTION_HANDLE_TOUCH_RADIUS,
-                         touchHandleX + SELECTION_HANDLE_TOUCH_RADIUS, touchHandleY + SELECTION_HANDLE_TOUCH_RADIUS);
-                 canvas.drawCircle(handleX, handleY, SELECTION_HANDLE_RADIUS, selectionHandlePaint);
-             }
-         }
-
-          if (endBox != null) {
-              RectF mappedEnd = pdfFile.mapRectToDevice(setup.page, setup.pageX, setup.pageY, (int) setup.pageSize.getWidth(), (int) setup.pageSize.getHeight(), endBox);
-             if (mappedEnd != null) {
-                 mappedEnd.sort();
-                 float handleX = mappedEnd.right;
-                 float handleY = mappedEnd.centerY();
-                 float touchHandleX = handleX + currentXOffset;
-                 float touchHandleY = handleY + currentYOffset;
-                 selectionEndHandleBounds = new RectF(touchHandleX - SELECTION_HANDLE_TOUCH_RADIUS, touchHandleY - SELECTION_HANDLE_TOUCH_RADIUS,
-                         touchHandleX + SELECTION_HANDLE_TOUCH_RADIUS, touchHandleY + SELECTION_HANDLE_TOUCH_RADIUS);
-                 canvas.drawCircle(handleX, handleY, SELECTION_HANDLE_RADIUS, selectionHandlePaint);
-             }
-         }
-     }
+    private void drawSelectionHandle(Canvas canvas, SelectionSetup setup, int index, TextSelectionHandle handle) {
+        RectF box = pdfFile.getCharBox(setup.page, index);
+        if (box == null) return;
+        RectF mapped = pdfFile.mapRectToDevice(setup.page, setup.pageX, setup.pageY,
+                (int) setup.pageSize.getWidth(), (int) setup.pageSize.getHeight(), box);
+        mapped.sort();
+        int textIndex = pdfFile.getTextIndexFromCharIndex(setup.page, index);
+        boolean rtl = selectionTextDirection != null && textIndex >= 0
+                && textIndex < selectionPageText.length() && (selectionTextDirection.getLevelAt(textIndex) & 1) != 0;
+        handle.draw(canvas, mapped, rtl, currentXOffset, currentYOffset);
+    }
 
      /**
       * Load all the parts around the center of the screen,
@@ -1746,7 +1726,8 @@ public class PDFView extends RelativeLayout {
 
     public void setSelectionHandleColor(@ColorInt int color) {
         selectionHandleColor = color;
-        selectionHandlePaint.setColor(color);
+        selectionStartHandle.setColor(color);
+        selectionEndHandle.setColor(color);
     }
 
     public void setSelectionHighlightColor(@ColorInt int color) {
@@ -1797,13 +1778,20 @@ public class PDFView extends RelativeLayout {
          clearTextSelectionInternal(true);
      }
 
-     boolean isStartHandleTouched(float x, float y) {
-         return selectionStartHandleBounds != null && selectionStartHandleBounds.contains(x, y);
-     }
+    boolean isStartHandleTouched(float x, float y) {
+        return selectionStartHandle.contains(x, y) && (!selectionEndHandle.contains(x, y)
+                || selectionStartHandle.distanceSquared(x, y) <= selectionEndHandle.distanceSquared(x, y));
+    }
 
-     boolean isEndHandleTouched(float x, float y) {
-         return selectionEndHandleBounds != null && selectionEndHandleBounds.contains(x, y);
-     }
+    boolean isEndHandleTouched(float x, float y) {
+        return selectionEndHandle.contains(x, y) && !isStartHandleTouched(x, y);
+    }
+
+    PointF beginSelectionHandleDrag(boolean start) {
+        allowSelectionActionPopupAutoShow = false;
+        dismissSelectionActionPopup();
+        return (start ? selectionStartHandle : selectionEndHandle).textPosition();
+    }
 
      void extendSelectionFromStart(float x, float y) {
         extendSelection(x, y, true);
@@ -1822,11 +1810,12 @@ public class PDFView extends RelativeLayout {
              return;
          }
          int currentIndex = fromStartHandle ? selectionStart : selectionEnd;
-         if (currentIndex != hit.charIndex) {
+         int nextIndex = fromStartHandle ? Math.min(hit.charIndex, selectionEnd) : Math.max(hit.charIndex, selectionStart);
+         if (currentIndex != nextIndex) {
              if (fromStartHandle) {
-                 selectionStart = hit.charIndex;
+                 selectionStart = nextIndex;
              } else {
-                 selectionEnd = hit.charIndex;
+                 selectionEnd = nextIndex;
              }
              selectedText = computeSelectedText();
              updateSelectionActionPopupPosition();
@@ -1850,8 +1839,13 @@ public class PDFView extends RelativeLayout {
         }
 
         selectionPage = hit.page;
-        selectionStart = hit.charIndex;
-        selectionEnd = hit.charIndex;
+        selectionPageText = pdfFile.getPageText(hit.page);
+        selectionWordIterator = BreakIterator.getWordInstance(Locale.getDefault());
+        selectionWordIterator.setText(selectionPageText);
+        selectionTextDirection = new Bidi(selectionPageText, Bidi.DIRECTION_DEFAULT_LEFT_TO_RIGHT);
+        int[] word = selectionWordBounds(hit.charIndex);
+        selectionStart = selectionAnchorStart = word[0];
+        selectionEnd = selectionAnchorEnd = word[1];
         selectedText = computeSelectedText();
         callbacks.callOnSelectionChanged(true);
         redraw();
@@ -1868,13 +1862,28 @@ public class PDFView extends RelativeLayout {
             return false;
         }
 
-        if (selectionEnd != hit.charIndex) {
-            selectionEnd = hit.charIndex;
+        int[] word = selectionWordBounds(hit.charIndex);
+        int start = Math.min(selectionAnchorStart, word[0]);
+        int end = Math.max(selectionAnchorEnd, word[1]);
+        if (selectionStart != start || selectionEnd != end) {
+            selectionStart = start;
+            selectionEnd = end;
             selectedText = computeSelectedText();
             updateSelectionActionPopupPosition();
             redraw();
         }
         return true;
+    }
+
+    private int[] selectionWordBounds(int charIndex) {
+        int offset = pdfFile.getTextIndexFromCharIndex(selectionPage, charIndex);
+        if (offset < 0 || offset >= selectionPageText.length()) return new int[]{charIndex, charIndex};
+        int start = selectionWordIterator.preceding(offset + 1);
+        int end = selectionWordIterator.following(offset);
+        if (start == BreakIterator.DONE || end == BreakIterator.DONE) return new int[]{charIndex, charIndex};
+        int first = pdfFile.getCharIndexFromTextIndex(selectionPage, start);
+        int last = pdfFile.getCharIndexFromTextIndex(selectionPage, end - 1);
+        return first >= 0 && last >= first ? new int[]{first, last} : new int[]{charIndex, charIndex};
     }
 
     void finishTextSelection() {
@@ -1894,8 +1903,13 @@ public class PDFView extends RelativeLayout {
         selectionPage = -1;
         selectionStart = INVALID_CHAR_INDEX;
         selectionEnd = INVALID_CHAR_INDEX;
-        selectionStartHandleBounds = null;
-        selectionEndHandleBounds = null;
+        selectionStartHandle.hide();
+        selectionEndHandle.hide();
+        selectionAnchorStart = INVALID_CHAR_INDEX;
+        selectionAnchorEnd = INVALID_CHAR_INDEX;
+        selectionWordIterator = null;
+        selectionTextDirection = null;
+        selectionPageText = "";
         selectedText = "";
         if (hadSelection) {
             callbacks.callOnSelectionChanged(false);
@@ -1968,8 +1982,9 @@ public class PDFView extends RelativeLayout {
         actionView.setTextColor(selectionPopupTextColor);
         actionView.setTextSize(SELECTION_POPUP_TEXT_SIZE_SP);
         int horizontalPadding = Util.getDP(getContext(), SELECTION_POPUP_HORIZONTAL_PADDING_DP);
-        int verticalPadding = Util.getDP(getContext(), SELECTION_POPUP_VERTICAL_PADDING_DP);
-        actionView.setPadding(horizontalPadding, verticalPadding, horizontalPadding, verticalPadding);
+        actionView.setMinHeight(Util.getDP(getContext(), SELECTION_POPUP_MIN_HEIGHT_DP));
+        actionView.setGravity(Gravity.CENTER);
+        actionView.setPadding(horizontalPadding, 0, horizontalPadding, 0);
         GradientDrawable background = new GradientDrawable();
         background.setColor(selectionPopupBackgroundColor);
         background.setCornerRadius(Util.getDP(getContext(), SELECTION_POPUP_CORNER_RADIUS_DP));
@@ -2132,43 +2147,23 @@ public class PDFView extends RelativeLayout {
         if (scaledPageSize.getWidth() <= 0 || scaledPageSize.getHeight() <= 0) {
             return null;
         }
+        if (pdfFile.getPageTextCount(page) == 0) return null;
         PageOffsets offsets = computePageOffsets(page);
         float pageLeft = offsets.x;
         float pageTop = offsets.y;
 
         int pageX = (int) pageLeft;
         int pageY = (int) pageTop;
-        int charIndexFromDevice = findCharIndexFromDeviceBoxes(page, mappedX, mappedY, pageX, pageY, scaledPageSize);
-        if (charIndexFromDevice >= 0) {
-            return new SelectionHit(page, charIndexFromDevice);
-        }
-
-        float localX = mappedX - pageLeft;
-        float localY = mappedY - pageTop;
-        if (localX < 0 || localY < 0 || localX > scaledPageSize.getWidth() || localY > scaledPageSize.getHeight()) {
-            return null;
-        }
-
+        PointF position = pdfFile.mapDeviceCoordsToPage(page, pageX, pageY,
+                (int) scaledPageSize.getWidth(), (int) scaledPageSize.getHeight(), (int) mappedX, (int) mappedY);
         Size originalPageSize = pdfFile.getOriginalPageSize(page);
-        if (originalPageSize.getWidth() <= 0 || originalPageSize.getHeight() <= 0) {
-            return null;
-        }
-
-        double pageCoordX = (localX / scaledPageSize.getWidth()) * originalPageSize.getWidth();
-        double pageCoordY = (localY / scaledPageSize.getHeight()) * originalPageSize.getHeight();
         double toleranceX = Math.max(1d, originalPageSize.getWidth() / scaledPageSize.getWidth());
         double toleranceY = Math.max(1d, originalPageSize.getHeight() / scaledPageSize.getHeight());
-        int charIndex = pdfFile.getCharIndexAtCoord(page, pageCoordX, pageCoordY, toleranceX, toleranceY);
+        int charIndex = pdfFile.getCharIndexAtCoord(page, position.x, position.y, toleranceX, toleranceY);
         if (charIndex < 0) {
-            double invertedPageCoordY = originalPageSize.getHeight() - pageCoordY;
-            charIndex = pdfFile.getCharIndexAtCoord(page, pageCoordX, invertedPageCoordY, toleranceX, toleranceY);
-            if (charIndex < 0) {
-                charIndex = findCharIndexFromBoxes(page, (float) pageCoordX, (float) pageCoordY, originalPageSize.getHeight());
-            }
+            charIndex = findCharIndexFromDeviceBoxes(page, mappedX, mappedY, pageX, pageY, scaledPageSize);
         }
-        if (charIndex < 0) {
-            return null;
-        }
+        if (charIndex < 0) return null;
 
         return new SelectionHit(page, charIndex);
     }
@@ -2206,42 +2201,6 @@ public class PDFView extends RelativeLayout {
         }
 
         if (bestDistance > MAX_FALLBACK_DEVICE_DISTANCE_SQ) {
-            return INVALID_CHAR_INDEX;
-        }
-        return bestIndex;
-    }
-
-    private int findCharIndexFromBoxes(int page, float pageCoordX, float pageCoordY, int pageHeight) {
-        int textCount = pdfFile.getPageTextCount(page);
-        if (textCount <= 0) {
-            return INVALID_CHAR_INDEX;
-        }
-
-        int bestIndex = INVALID_CHAR_INDEX;
-        float bestDistance = Float.MAX_VALUE;
-        float[] candidateY = new float[]{pageCoordY, pageHeight - pageCoordY};
-        for (float y : candidateY) {
-            for (int i = 0; i < textCount; i++) {
-                RectF charBox = pdfFile.getCharBox(page, i);
-                if (charBox == null) {
-                    continue;
-                }
-                charBox.sort();
-                if (charBox.contains(pageCoordX, y)) {
-                    return i;
-                }
-                float centerX = (charBox.left + charBox.right) / 2f;
-                float centerY = (charBox.top + charBox.bottom) / 2f;
-                float dx = centerX - pageCoordX;
-                float dy = centerY - y;
-                float distance = dx * dx + dy * dy;
-                if (distance < bestDistance) {
-                    bestDistance = distance;
-                    bestIndex = i;
-                }
-            }
-        }
-        if (bestDistance > MAX_FALLBACK_CHAR_DISTANCE_SQ) {
             return INVALID_CHAR_INDEX;
         }
         return bestIndex;

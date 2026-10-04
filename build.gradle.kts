@@ -68,6 +68,7 @@ allprojects {
         google()
         // mavenLocal()
         mavenCentral()
+        maven { url = uri("https://jitpack.io") }
         maven {
             name = "infomaniakReposiliteRepository"
             url = uri("https://maven.infomaniak.app/releases")

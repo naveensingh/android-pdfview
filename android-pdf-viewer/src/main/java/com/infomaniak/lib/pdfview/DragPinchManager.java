@@ -65,6 +65,7 @@ class DragPinchManager implements
     private boolean selectingText = false;
     private boolean draggingSelectionHandle = false;
     private boolean draggingStartHandle = false;
+    private final PointF selectionDragOffset = new PointF();
     private boolean enabled = false;
     private boolean hasTouchPriority = false;
     private float startingScrollingXPosition = STARTING_TOUCH_POSITION_NOT_INITIALIZED;
@@ -250,21 +251,6 @@ class DragPinchManager implements
     @Override
     public void onLongPress(@NonNull MotionEvent e) {
         pdfView.performLongClick();
-        // Check if touching a selection handle
-        if (pdfView.hasTextSelection()) {
-            if (pdfView.isStartHandleTouched(e.getX(), e.getY())) {
-                draggingSelectionHandle = true;
-                draggingStartHandle = true;
-                setSelectionTouchPriority(true);
-                return;
-            }
-            if (pdfView.isEndHandleTouched(e.getX(), e.getY())) {
-                draggingSelectionHandle = true;
-                draggingStartHandle = false;
-                setSelectionTouchPriority(true);
-                return;
-            }
-        }
         if (pdfView.isTextSelectionEnabled() && pdfView.startTextSelection(e.getX(), e.getY())) {
             selectingText = true;
             setSelectionTouchPriority(true);
@@ -367,17 +353,13 @@ class DragPinchManager implements
             return false;
         }
 
-        // Check for handle dragging on ACTION_DOWN
         if (event.getAction() == MotionEvent.ACTION_DOWN && pdfView.hasTextSelection()) {
-            if (pdfView.isStartHandleTouched(event.getX(), event.getY())) {
+            boolean start = pdfView.isStartHandleTouched(event.getX(), event.getY());
+            if (start || pdfView.isEndHandleTouched(event.getX(), event.getY())) {
                 draggingSelectionHandle = true;
-                draggingStartHandle = true;
-                setSelectionTouchPriority(true);
-                return true;
-            }
-            if (pdfView.isEndHandleTouched(event.getX(), event.getY())) {
-                draggingSelectionHandle = true;
-                draggingStartHandle = false;
+                draggingStartHandle = start;
+                PointF position = pdfView.beginSelectionHandleDrag(start);
+                selectionDragOffset.set(position.x - event.getX(), position.y - event.getY());
                 setSelectionTouchPriority(true);
                 return true;
             }
@@ -387,9 +369,9 @@ class DragPinchManager implements
             if (event.getAction() == MotionEvent.ACTION_MOVE) {
                 setSelectionTouchPriority(true);
                 if (draggingStartHandle) {
-                    pdfView.extendSelectionFromStart(event.getX(), event.getY());
+                    pdfView.extendSelectionFromStart(event.getX() + selectionDragOffset.x, event.getY() + selectionDragOffset.y);
                 } else {
-                    pdfView.extendSelectionFromEnd(event.getX(), event.getY());
+                    pdfView.extendSelectionFromEnd(event.getX() + selectionDragOffset.x, event.getY() + selectionDragOffset.y);
                 }
                 return true;
             }

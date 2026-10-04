@@ -6,7 +6,7 @@ agp = "9.3.2"
 kotlin = "2.4.10"
 material = "1.14.0"
 nmcp = "1.6.1"
-pdfium = "1.9.12"
+pdfium = "f3d7679e72"
 recyclerView = "1.4.0"
 viewpager2 = "1.1.0"
 
@@ -16,7 +16,7 @@ appcompat = { module = "androidx.appcompat:appcompat", version.ref = "appcompat"
 core-ktx = { module = "androidx.core:core-ktx", version.ref = "coreKtx" }
 kotlin-gradle-plugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
 material = { module = "com.google.android.material:material", version.ref = "material" }
-pdfium = { module = "com.infomaniak.pdfiumandroid:pdfiumandroid", version.ref = "pdfium" }
+pdfium = { module = "com.github.naveensingh:PdfiumAndroid", version.ref = "pdfium" }
 recyclerview = { module = "androidx.recyclerview:recyclerview", version.ref = "recyclerView" }
 viewpager2 = { module = "androidx.viewpager2:viewpager2", version.ref = "viewpager2" }
 

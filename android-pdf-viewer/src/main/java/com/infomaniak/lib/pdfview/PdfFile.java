@@ -18,6 +18,7 @@
 package com.infomaniak.lib.pdfview;
 
 import android.graphics.Bitmap;
+import android.graphics.PointF;
 import android.graphics.Rect;
 import android.graphics.RectF;
 import android.util.SparseBooleanArray;
@@ -353,6 +354,12 @@ class PdfFile {
         return pdfiumCore.mapRectToDevice(pdfDocument, docPage, startX, startY, sizeX, sizeY, 0, rect);
     }
 
+    public PointF mapDeviceCoordsToPage(int pageIndex, int startX, int startY, int sizeX, int sizeY,
+                                       int deviceX, int deviceY) {
+        return pdfiumCore.mapDeviceCoordsToPage(pdfDocument, documentPage(pageIndex),
+                startX, startY, sizeX, sizeY, 0, deviceX, deviceY);
+    }
+
     public Size getOriginalPageSize(int pageIndex) {
         int docPage = documentPage(pageIndex);
         if (docPage < 0) {
@@ -411,6 +418,14 @@ class PdfFile {
             return -1;
         }
         return pdfiumCore.getCharIndexAtCoord(pdfDocument, docPage, pageX, pageY, toleranceX, toleranceY);
+    }
+
+    public int getCharIndexFromTextIndex(int pageIndex, int textIndex) {
+        return pdfiumCore.getCharIndexFromTextIndex(pdfDocument, documentPage(pageIndex), textIndex);
+    }
+
+    public int getTextIndexFromCharIndex(int pageIndex, int charIndex) {
+        return pdfiumCore.getTextIndexFromCharIndex(pdfDocument, documentPage(pageIndex), charIndex);
     }
 
     public RectF getCharBox(int pageIndex, int charIndex) {
